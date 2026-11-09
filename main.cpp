@@ -1,6 +1,9 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
 
 using namespace std;
 
@@ -12,46 +15,52 @@ void main() {
 }
 )";
 
-const char* fragmentShaderSource = R"(
-#version 330 core
-out vec4 FragColor;
-uniform vec2 u_camera;
-
-vec2 hash2(vec2 p) {
-    p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
-    return fract(sin(p) * 43758.5453);
-}
-
-void main() {
-    vec2 p = (gl_FragCoord.xy + u_camera) / 80.0;
-    vec2 baseCell = floor(p);
-    vec2 localPos = fract(p);
-
-    float minDist = 10.0;
-    vec2 closestCell = vec2(0.0);
-
-    for (int y = -1; y <= 1; y++) {
-        for (int x = -1; x <= 1; x++) {
-            vec2 neighbor = vec2(float(x), float(y));
-            vec2 seedOffset = hash2(baseCell + neighbor);
-            vec2 diff = neighbor + seedOffset - localPos;
-
-            float d = max(abs(diff.x), abs(diff.y));
-
-            if (d < minDist) {
-                minDist = d;
-                closestCell = baseCell + neighbor;
-            }
-        }
+string readFile(const string& path) {
+    ifstream f(path);
+    if (!f) {
+        cout << "Cannot open " << path << "\n";
+        return "";
     }
-
-    vec3 darkBg = vec3(0.05, 0.01, 0.10);
-    vec3 neonCyan = vec3(0.0, 0.88, 0.98);
-    vec3 col = mix(neonCyan, darkBg, minDist);
-
-    FragColor = vec4(col, 1.0);
+    stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
 }
-)";
+
+unsigned int buildProgram() {
+    string header =
+        "#version 330 core\n"
+        "out vec4 FragColor;\n"
+        "uniform vec2 u_camera;\n"
+        "uniform float u_time;\n";
+    string fragSrc = header + readFile("nodes.glsl") + "\n" + readFile("main.frag");
+    const char* fsrc = fragSrc.c_str();
+
+    int ok;
+    char log[2048];
+
+    unsigned int vert = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vert, 1, &vertexShaderSource, nullptr);
+    glCompileShader(vert);
+    glGetShaderiv(vert, GL_COMPILE_STATUS, &ok);
+    if (!ok) { glGetShaderInfoLog(vert, 2048, nullptr, log); cout << "VERTEX ERROR:\n" << log << "\n"; }
+
+    unsigned int frag = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(frag, 1, &fsrc, nullptr);
+    glCompileShader(frag);
+    glGetShaderiv(frag, GL_COMPILE_STATUS, &ok);
+    if (!ok) { glGetShaderInfoLog(frag, 2048, nullptr, log); cout << "FRAGMENT ERROR:\n" << log << "\n"; }
+
+    unsigned int prog = glCreateProgram();
+    glAttachShader(prog, vert);
+    glAttachShader(prog, frag);
+    glLinkProgram(prog);
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) { glGetProgramInfoLog(prog, 2048, nullptr, log); cout << "LINK ERROR:\n" << log << "\n"; }
+
+    glDeleteShader(vert);
+    glDeleteShader(frag);
+    return prog;
+}
 
 int main() {
     glfwInit();
@@ -72,21 +81,7 @@ int main() {
         return -1;
     }
 
-    unsigned int vert = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vert, 1, &vertexShaderSource, nullptr);
-    glCompileShader(vert);
-
-    unsigned int frag = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(frag, 1, &fragmentShaderSource, nullptr);
-    glCompileShader(frag);
-
-    unsigned int shader = glCreateProgram();
-    glAttachShader(shader, vert);
-    glAttachShader(shader, frag);
-    glLinkProgram(shader);
-
-    glDeleteShader(vert);
-    glDeleteShader(frag);
+    unsigned int shader = buildProgram();
 
     float quad[] = {
         -1.0f, -1.0f,
@@ -111,15 +106,27 @@ int main() {
     float camX = 0.0f;
     float camY = 0.0f;
     int camLoc = glGetUniformLocation(shader, "u_camera");
+    int timeLoc = glGetUniformLocation(shader, "u_time");
 
     double lastTime = glfwGetTime();
     bool dragging = false;
     double lastX = 0.0, lastY = 0.0;
+    bool rWasDown = false;
 
     while (!glfwWindowShouldClose(window)) {
         double now = glfwGetTime();
         float dt = (float)(now - lastTime);
         lastTime = now;
+
+        bool rDown = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
+        if (rDown && !rWasDown) {
+            glDeleteProgram(shader);
+            shader = buildProgram();
+            camLoc = glGetUniformLocation(shader, "u_camera");
+            timeLoc = glGetUniformLocation(shader, "u_time");
+            cout << "Reloaded shader\n";
+        }
+        rWasDown = rDown;
 
         glClearColor(0.06f, 0.02f, 0.12f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
@@ -149,6 +156,7 @@ int main() {
 
         glUseProgram(shader);
         glUniform2f(camLoc, camX, camY);
+        glUniform1f(timeLoc, (float)now);
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
