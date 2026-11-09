@@ -17,15 +17,39 @@ const char* fragmentShaderSource = R"(
 out vec4 FragColor;
 uniform vec2 u_camera;
 
+vec2 hash2(vec2 p) {
+    p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+    return fract(sin(p) * 43758.5453);
+}
+
 void main() {
-    vec2 worldPos = gl_FragCoord.xy + u_camera;
-    vec2 cell = floor(worldPos / 40.0);
-    float pattern = mod(cell.x + cell.y, 2.0);
-    if (pattern == 0.0) {
-        FragColor = vec4(0.06, 0.02, 0.12, 1.0);
-    } else {
-        FragColor = vec4(0.0, 0.85, 0.95, 1.0);
+    vec2 p = (gl_FragCoord.xy + u_camera) / 80.0;
+    vec2 baseCell = floor(p);
+    vec2 localPos = fract(p);
+
+    float minDist = 10.0;
+    vec2 closestCell = vec2(0.0);
+
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 neighbor = vec2(float(x), float(y));
+            vec2 seedOffset = hash2(baseCell + neighbor);
+            vec2 diff = neighbor + seedOffset - localPos;
+
+            float d = max(abs(diff.x), abs(diff.y));
+
+            if (d < minDist) {
+                minDist = d;
+                closestCell = baseCell + neighbor;
+            }
+        }
     }
+
+    vec3 darkBg = vec3(0.05, 0.01, 0.10);
+    vec3 neonCyan = vec3(0.0, 0.88, 0.98);
+    vec3 col = mix(neonCyan, darkBg, minDist);
+
+    FragColor = vec4(col, 1.0);
 }
 )";
 
